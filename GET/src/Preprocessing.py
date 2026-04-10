@@ -47,83 +47,59 @@ class MeshPreprocessor:
         return neighbor_indices
 
     def compute_log_and_ptransport(self, radius=0.2, max_neighbors=200):
-        """
-        Efficiently precomputes logarithmic maps and transport angles for
-        all neighborhoods in a single pass using the Vector Heat Method.
-
-        This version avoids recomputing the same transported vector field
-        multiple times: we first build the neighborhood lists for every
-        center vertex, and record which centers need each source vertex q.
-        Then we compute the transport field for each source q only once and
-        fill the corresponding angles for every center that had q as a
-        neighbor.
-        """
-        vertices = self.mesh.vertices
-        faces = self.mesh.faces
+        vertices = self.mesh.vertices.astype(np.float32)
         num_vertices = len(vertices)
 
-        # 1. Initialize the Vector Heat Solvers
-        # This pre-factors the Laplacian and Poisson matrices once
-        dist_solver = pp3d.MeshHeatMethodDistanceSolver(vertices, faces)
-        vector_solver = pp3d.MeshVectorHeatSolver(vertices, faces)
+        dist_solver = pp3d.MeshHeatMethodDistanceSolver(vertices, self.mesh.faces)
+        vector_solver = pp3d.MeshVectorHeatSolver(vertices, self.mesh.faces)
 
-        # Prepare data structures
-        neighbor_data = [None] * num_vertices
-        # For each source vertex q, keep a list of center indices p that include q as a neighbor
-        centers_per_q = [[] for _ in range(num_vertices)]
-        # For each center p, map neighbor q -> position index inside that center's neighbor array
-        positions_per_center = [dict() for _ in range(num_vertices)]
+        # Get the exact basis used by the solver for log-maps and transport
+        basis_x, basis_y = vector_solver.get_local_basis_vectors()
+        normals = self.mesh.vertex_normals.astype(np.float32)
 
-        # First pass: build neighborhoods and placeholders for g_qp
+        # Project global coordinates into this local gauge: [<p,x>, <p,y>, <p,n>]. This is the GET original feature map
+        local_x = np.einsum("ij,ij->i", vertices, basis_x)[:, np.newaxis]
+        local_y = np.einsum("ij,ij->i", vertices, basis_y)[:, np.newaxis]
+        local_z = np.einsum("ij,ij->i", vertices, normals)[:, np.newaxis]
+        features = np.hstack([local_x, local_y, local_z]).astype(np.float32)
+
+        data = []
+
+        # If you must do all-to-all transport, the most efficient way in
+        # potpourri3d is to iterate and use the pre-factored back-substitution.
         for i in range(num_vertices):
-            # Identify neighbors within geodesic radius
+            # 1. Distances and Log Map (Fast because solver is pre-factored)
             dists = dist_solver.compute_distance(i)
+            log_map = vector_solver.compute_log_map(i)  # (N, 2)
+
+            # 2. Get neighbors
             neighbor_indices = np.where(dists <= radius)[0]
-            # Remove the center vertex from its own neighborhood
             neighbor_indices = neighbor_indices[neighbor_indices != i]
 
-            # If there are more neighbors than max_neighbors, we keep the closest ones.
-            if len(neighbor_indices) > max_neighbors:
-                neighbor_indices = neighbor_indices[
-                    np.argsort(dists[neighbor_indices])
-                ][:max_neighbors]
+            # 3. Parallel Transport
+            # We compute the transport from 'i' to its neighbors here.
+            # Note: transport(i->q) is the inverse of transport(q->i).
+            # We transport the basis vector [1,0] from center i to all neighbors.
+            transport_from_center = vector_solver.transport_tangent_vector(
+                i, [1.0, 0.0]
+            )
 
-            # Compute the Logarithmic Map u_q for the center i and keep only neighbors
-            u_q = vector_solver.compute_log_map(i)[neighbor_indices]
+            # Extract angles for neighbors
+            v_neighbors = transport_from_center[neighbor_indices]
+            g_pq = np.arctan2(v_neighbors[:, 1], v_neighbors[:, 0])
 
-            # Placeholder for angles; will be filled in the second pass
-            g_qp = np.zeros(len(neighbor_indices), dtype=np.float32)
+            # g_qp (neighbor to center) is simply -g_pq
+            g_qp = -g_pq
 
-            # Store neighbor info
-            neighbor_data[i] = {
-                "q_indices": neighbor_indices.astype(np.int32),
-                "u_q": u_q.astype(np.float32),
-                "g_qp": g_qp,
-            }
+            data.append(
+                {
+                    "q_indices": neighbor_indices.astype(np.int32),
+                    "u_q": log_map[neighbor_indices].astype(np.float32),
+                    "g_qp": g_qp.astype(np.float32),
+                }
+            )
 
-            # Record reverse mapping from neighbor q to center i and position
-            for pos, q in enumerate(neighbor_indices):
-                q_int = int(q)
-                centers_per_q[q_int].append(i)
-                positions_per_center[i][q_int] = pos
-
-        # Second pass: compute transport fields once per source q and fill angles for all centers
-        for q in range(num_vertices):
-            centers = centers_per_q[q]
-            if not centers:
-                continue
-
-            # Transport the canonical tangent vector (1,0) from q to all vertices
-            transported_field = vector_solver.transport_tangent_vector(q, [1.0, 0.0])
-
-            # Fill angles for every center p that had q as a neighbor
-            for p in centers:
-                pos = positions_per_center[p][q]
-                v = transported_field[p]
-                angle = np.arctan2(v[1], v[0])
-                neighbor_data[p]["g_qp"][pos] = np.float32(angle)
-
-        return neighbor_data
+            return data, features
 
     def clean_mesh(self):
         """Clean the mesh by removing duplicated vertices, degenerate triangles, and non-manifold edges using Open3D and Trimesh."""
