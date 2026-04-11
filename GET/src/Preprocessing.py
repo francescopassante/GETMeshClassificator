@@ -42,11 +42,11 @@ class MeshPreprocessor:
         # 3. Compute distances from a source vertex p (index p_idx)
         distances = solver.compute_distance(p_idx)
 
-        # 4. Select vertices within the 0.2 geodesic radius
+        # 4. Select vertices within the RADIUS geodesic radius
         neighbor_indices = np.where(distances <= radius)[0]
         return neighbor_indices
 
-    def compute_log_and_ptransport(self, radius=0.2, max_neighbors=200):
+    def compute_log_and_ptransport(self, radius, max_neighbors):
         vertices = self.mesh.vertices.astype(np.float32)
         num_vertices = len(vertices)
 
@@ -54,8 +54,7 @@ class MeshPreprocessor:
         vector_solver = pp3d.MeshVectorHeatSolver(vertices, self.mesh.faces)
 
         # Get the exact basis used by the solver for log-maps and transport
-        basis_x, basis_y = vector_solver.get_local_basis_vectors()
-        normals = self.mesh.vertex_normals.astype(np.float32)
+        basis_x, basis_y, normals = vector_solver.get_tangent_frames()
 
         # Project global coordinates into this local gauge: [<p,x>, <p,y>, <p,n>]. This is the GET original feature map
         local_x = np.einsum("ij,ij->i", vertices, basis_x)[:, np.newaxis]
@@ -75,6 +74,12 @@ class MeshPreprocessor:
             # 2. Get neighbors
             neighbor_indices = np.where(dists <= radius)[0]
             neighbor_indices = neighbor_indices[neighbor_indices != i]
+
+            # Caps the number of neighbors to max_neighbors, keeping the closest ones
+            if len(neighbor_indices) > max_neighbors:
+                neighbor_indices = neighbor_indices[
+                    np.argsort(dists[neighbor_indices])
+                ][:max_neighbors]
 
             # 3. Parallel Transport
             # We compute the transport from 'i' to its neighbors here.
@@ -100,7 +105,7 @@ class MeshPreprocessor:
                 }
             )
 
-            return data
+        return data
 
     def clean_mesh(self):
         """Clean the mesh by removing duplicated vertices, degenerate triangles, and non-manifold edges using Open3D and Trimesh."""
@@ -144,21 +149,26 @@ class MeshPreprocessor:
 
 
 if __name__ == "__main__":
-    base = "data/SHREC11_test_database_new/"
-    paths = [i for i in range(0, 600) if not path.exists(f"data/processed/T{i}.pt")]
-    K = 300  # max neighbors (actual max is 318, i cap it, see neighborhood_sizes.png)
+    SUBSAMPLE = 0.2
+    RADIUS = 0.2
+    MAX_NEIGH = 300
+
+    base = "../data/SHREC11_test_database_new/"
+    paths = [i for i in range(0, 600) if not path.exists(f"../data/processed/T{i}.pt")]
 
     for j, filename in enumerate(tqdm(paths)):
         preprocessor = MeshPreprocessor.from_file(
-            base + f"T{filename}.off", subsample=0.2
+            base + f"T{filename}.off", subsample=SUBSAMPLE
         )
         try:
-            data = preprocessor.compute_log_and_ptransport(radius=0.2, max_neighbors=K)
+            data = preprocessor.compute_log_and_ptransport(
+                radius=RADIUS, max_neighbors=MAX_NEIGH
+            )
         except Exception:
             preprocessor.clean_mesh()
             try:
                 data = preprocessor.compute_log_and_ptransport(
-                    radius=0.2, max_neighbors=K
+                    radius=RADIUS, max_neighbors=MAX_NEIGH
                 )
             except Exception as e:
                 print(f"Failed to process T{filename}.off after cleaning: {e}")
@@ -168,15 +178,17 @@ if __name__ == "__main__":
 
         # Preallocate tensors
         features = torch.zeros((N, 3), dtype=torch.float32)  # local features
-        neighbors = torch.full((N, K), -1, dtype=torch.long)  # neighbor indices
-        u_q = torch.zeros((N, K, 2), dtype=torch.float32)  # 2D vectors
-        g_qp = torch.zeros((N, K), dtype=torch.float32)  # cos/sin angles
-        mask = torch.zeros((N, K), dtype=torch.bool)  # valid neighbors mask
+        neighbors = torch.full((N, MAX_NEIGH), -1, dtype=torch.long)  # neighbor indices
+        u_q = torch.zeros((N, MAX_NEIGH, 2), dtype=torch.float32)  # 2D vectors
+        g_qp = torch.zeros((N, MAX_NEIGH), dtype=torch.float32)  # cos/sin angles
+        mask = torch.zeros((N, MAX_NEIGH), dtype=torch.bool)  # valid neighbors mask
 
         # Fill tensors
         for i, d in enumerate(data):
             q_indices = d["q_indices"]
-            n = min(len(q_indices), K)  # number of neighbors (capped at K)
+            n = min(
+                len(q_indices), MAX_NEIGH
+            )  # number of neighbors (capped at MAX_NEIGH)
 
             u = d["u_q"]
             g = d["g_qp"]
@@ -201,7 +213,7 @@ if __name__ == "__main__":
                 "g_qp": g_qp,
                 "mask": mask,
             },
-            f"data/processed/T{filename}.pt",
+            f"../data/processed/T{filename}.pt",
         )
         # Save the preprocessed mesh as well, for reference (optional)
-        preprocessor.mesh.export(f"data/processed/T{filename}.off")
+        preprocessor.mesh.export(f"../data/processed/T{filename}.off")
