@@ -195,6 +195,24 @@ class SelfAttentionBlock(nn.Module):
         return out
 
 
+class GroupPooling(nn.Module):
+    def __init__(self, in_channels):
+        super().__init__()
+        self.in_channels = in_channels
+
+    def forward(self, x):
+        return x.max(dim=-1)[0]  # [N_v, in_channels]
+
+
+class GlobalAveragePooling(nn.Module):
+    def __init__(self, in_channels):
+        super().__init__()
+        self.in_channels = in_channels
+
+    def forward(self, x):
+        return x.mean(dim=0)  # [in_channels]
+
+
 if __name__ == "__main__":
     # I want to check that if i rotate an input (x,y,z) then apply the layer i get a permutation of the output fields:
     def check_equivariance_l2r():
@@ -268,4 +286,19 @@ if __name__ == "__main__":
         print(output[0])
         print(rot_output[0])
 
-    check_equivariance_sa(N=3, channels=1)
+    def show_pooling():
+        group_pool = GroupPooling(in_channels=3)
+        input = torch.tensor(
+            [
+                [[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12]],
+                [[13, 14, 15, 16], [17, 18, 19, 20], [21, 22, 23, 24]],
+                [[25, 26, 27, 28], [29, 30, 31, 32], [33, 34, 35, 36]],
+            ],
+            dtype=torch.float32,
+        )
+        print(out := group_pool(input))
+        print(out.shape)
+
+        global_pool = GlobalAveragePooling(in_channels=3)
+        print(out := global_pool(out))
+        print(out.shape)
