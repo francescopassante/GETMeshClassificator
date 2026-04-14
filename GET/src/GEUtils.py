@@ -107,33 +107,31 @@ class RegularToRegular:
         """
         V, K = theta.shape
         device = theta.device
+        N = self.N
 
-        # Initialize D_theta batch
-        D_theta = torch.zeros(V, K, self.N, self.N, device=device)
+        # 1. Inizializzazione corretta con dimensione Batch
+        D_theta = torch.zeros(V, K, N, N, device=device, dtype=theta.dtype)
 
-        # k = 0 block (scalar irrep)
+        # 2. Riempimento blocchi di rotazione (Irreps)
         D_theta[..., 0, 0] = 1.0
-
-        # Higher frequencies
-        for k in range(1, (self.N // 2) + 1):
-            cos_kt = torch.cos(k * theta)  # (V, K)
-            sin_kt = torch.sin(k * theta)  # (V, K)
-
-            i = 2 * k - 1
-            j = 2 * k
-
+        for k in range(1, (N // 2) + 1):
+            cos_kt = torch.cos(k * theta)
+            sin_kt = torch.sin(k * theta)
+            i, j = 2 * k - 1, 2 * k
             D_theta[..., i, i] = cos_kt
             D_theta[..., i, j] = -sin_kt
             D_theta[..., j, i] = sin_kt
             D_theta[..., j, j] = cos_kt
 
-        # Apply change of basis: A @ D @ A^T in batch
-        A = self.A  # (N, N)
+        # 3. Cambio di base: rho = A @ D_theta @ A^T
+        # Usiamo einsum per evitare confusione nel broadcasting del batch
+        # 'ij' è A, 'bvknm' è D_theta, 'mj' (o meglio 'lj') è A.T
+        A = self.A.to(device)
 
-        rho = torch.matmul(
-            torch.matmul(A, D_theta),  # broadcasted
-            A.T,
-        )
+        # rho = A @ D_theta
+        rho = torch.einsum("ij, vknm -> vkim", A, D_theta)
+        # rho = (A @ D_theta) @ A.T
+        rho = torch.einsum("vkim, jm -> vkij", rho, A)
 
         return rho.round(decimals=6)
 

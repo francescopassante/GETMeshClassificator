@@ -5,16 +5,16 @@ import torch.nn as nn
 from tqdm import tqdm
 
 
-class LocalToRegularLinearBlock(nn.Module):
+class GELocalToRegularLinearBlock(nn.Module):
     """
     A linear layer that implements equivariance from the rho_local representation to the regular representation for the cyclic group C_N.
     """
 
-    def __init__(self, N, num_fields):
+    def __init__(self, N, channels):
         """
         Args:
             N: Dimension of the regular representation (C_N).
-            num_fields: Number of regular output fields.
+            channels: Number of regular output fields.
         """
         super().__init__()
         self.N = N
@@ -24,35 +24,35 @@ class LocalToRegularLinearBlock(nn.Module):
             "basis", torch.stack(W_basis)
         )  # This registers the basis as a non-learnable buffer
         self.num_basis = self.basis.shape[0]  # Number of basis matrices
-        self.num_fields = num_fields
+        self.channels = channels
 
         # Learnable coefficients for each basis matrix for each output field
         # Initializing with small random values
-        self.weights = nn.Parameter(torch.randn(num_fields, self.num_basis) * 0.02)
+        self.weights = nn.Parameter(torch.randn(channels, self.num_basis) * 0.02)
 
     def forward(self, x):
         """
         Args:
             x: Input features (rho_local) of shape (Batch, Num_Points, 3)
         Returns:
-            Output feature fields of shape (Batch, Num_Points, num_fields * N)
+            Output feature fields of shape (Batch, Num_Points, channels * N)
         """
         # 1. Compute the kernel for each field: W = sum(a_i * W_basis_i)
-        # Resulting shape: (num_fields, N, 3)
+        # Resulting shape: (channels, N, 3)
         combined_kernels = torch.einsum("fk,knm->fnm", self.weights, self.basis)
 
         # 2. Reshape kernels to a single large weight matrix for efficient computation
-        # Shape: (num_fields, N, 3) -> (num_fields * N, 3)
-        W_final = combined_kernels.view(self.num_fields * self.N, 3)
+        # Shape: (channels, N, 3) -> (channels * N, 3)
+        W_final = combined_kernels.view(self.channels * self.N, 3)
 
         # 3. Apply the linear transformation to the input features
-        # (B, P, 3) @ (3, num_fields*N) -> (B, P, num_fields*N)
+        # (B, P, 3) @ (3, channels*N) -> (B, P, channels*N)
         out = torch.matmul(x, W_final.t())
 
         return out
 
 
-class SelfAttentionBlock(nn.Module):
+class GESelfAttentionBlock(nn.Module):
     def __init__(self, N, in_channels):
         super().__init__()
         self.N = N
@@ -190,19 +190,17 @@ class SelfAttentionBlock(nn.Module):
         return out
 
 
-class GroupPooling(nn.Module):
-    def __init__(self, in_channels):
+class GEGroupPooling(nn.Module):
+    def __init__(self):
         super().__init__()
-        self.in_channels = in_channels
 
     def forward(self, x):
         return x.max(dim=-1)[0]  # [N_v, in_channels]
 
 
-class GlobalAveragePooling(nn.Module):
-    def __init__(self, in_channels):
+class GEGlobalAveragePooling(nn.Module):
+    def __init__(self):
         super().__init__()
-        self.in_channels = in_channels
 
     def forward(self, x):
         return x.mean(dim=0)  # [in_channels]
@@ -221,7 +219,7 @@ if __name__ == "__main__":
             )
             return x @ rotation_matrix.t()
 
-        equivariant_layer = LocalToRegularLinearBlock(N=9, num_fields=12)
+        equivariant_layer = GELocalToRegularLinearBlock(N=9, channels=12)
 
         # Rotate the input by 2pi/9 (the angle corresponding to the cyclic group C9) and check the output
         theta = torch.tensor(2 * np.pi / 9, dtype=torch.float32)
@@ -246,7 +244,7 @@ if __name__ == "__main__":
         mask = data["mask"]  # (N_v, Max_Neighbors)
 
         # (N_v, in_channels * N)
-        l2rBlock = LocalToRegularLinearBlock(N, num_fields=channels)
+        l2rBlock = GELocalToRegularLinearBlock(N, channels=channels)
 
         r2r = GEUtils.RegularToRegular(N)
         parallel_transport_matrices = r2r.extended_regular_representation(
@@ -271,7 +269,7 @@ if __name__ == "__main__":
         # A rotation of the reference frame also requires a rotation of the relative positions!
         rot_rel_pos_u = torch.einsum("ij,vnj->vni", rot_mat_3d[:2, :2], rel_pos_u)
 
-        sa = SelfAttentionBlock(N, in_channels=channels)
+        sa = GESelfAttentionBlock(N, in_channels=channels)
 
         output = sa(input, neighbors, mask, parallel_transport_matrices, rel_pos_u)
         rot_output = sa(
@@ -282,7 +280,7 @@ if __name__ == "__main__":
         print(rot_output[0])
 
     def show_pooling():
-        group_pool = GroupPooling(in_channels=3)
+        group_pool = GEGroupPooling(in_channels=3)
         input = torch.tensor(
             [
                 [[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12]],
@@ -294,7 +292,7 @@ if __name__ == "__main__":
         print(out := group_pool(input))
         print(out.shape)
 
-        global_pool = GlobalAveragePooling(in_channels=3)
+        global_pool = GEGlobalAveragePooling(in_channels=3)
         print(out := global_pool(out))
         print(out.shape)
 
@@ -309,14 +307,14 @@ if __name__ == "__main__":
         rel_pos_u = data["u_q"]  # (N_v, Max_Neighbors, 2)
         mask = data["mask"]  # (N_v, Max_Neighbors)
 
-        l2rBlock = LocalToRegularLinearBlock(N, num_fields=channels)
+        l2rBlock = GELocalToRegularLinearBlock(N, channels=channels)
 
         r2r = GEUtils.RegularToRegular(N)
         parallel_transport_matrices = r2r.extended_regular_representation(
             parallel_transport_angles
         )
 
-        sa = SelfAttentionBlock(N, in_channels=channels)
+        sa = GESelfAttentionBlock(N, in_channels=channels)
 
         # The parallel transport angles transform as: new_theta_nv = theta_nv + random_angle_v - random_angle_n
         new_parallel_transport_angles = (
@@ -350,8 +348,8 @@ if __name__ == "__main__":
         )
 
         # Now let's apply group pooling and average pooling:
-        group_poool = GroupPooling(in_channels=channels)
-        global_pool = GlobalAveragePooling(in_channels=channels)
+        group_poool = GEGroupPooling(in_channels=channels)
+        global_pool = GEGlobalAveragePooling(in_channels=channels)
 
         out = global_pool(group_poool(output))
         rot_out = global_pool(group_poool(rot_output))
@@ -395,13 +393,13 @@ if __name__ == "__main__":
     N = 9
     channels = 12
 
-    l2rBlock = LocalToRegularLinearBlock(N, num_fields=channels)
+    l2rBlock = GELocalToRegularLinearBlock(N, channels=channels)
 
     r2r = GEUtils.RegularToRegular(N)
     parallel_transport_matrices = r2r.extended_regular_representation(
         parallel_transport_angles
     )
 
-    sa = SelfAttentionBlock(N, in_channels=channels)
+    sa = GESelfAttentionBlock(N, in_channels=channels)
 
     out = sa(l2rBlock(x), neighbors, mask, parallel_transport_matrices, rel_pos_u)
