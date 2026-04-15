@@ -74,8 +74,12 @@ class GESelfAttentionBlock(nn.Module):
         self.register_buffer("reg_to_reg_basis", torch.stack(basis))
 
         # Query and Key coefficients are [in_channels, len_basis] because we use a linear comb of the basis for each channel, then sum
-        self.query_coeffs = nn.Parameter(torch.randn(in_channels, len(basis)) * 0.02)
-        self.key_coeffs = nn.Parameter(torch.randn(in_channels, len(basis)) * 0.02)
+        self.query_coeffs = nn.Parameter(torch.empty(in_channels, len(basis)))
+        self.key_coeffs = nn.Parameter(torch.empty(in_channels, len(basis)))
+
+        # Li inizializzi (Kaiming è un'ottima scelta per rompere la simmetria)
+        nn.init.kaiming_normal_(self.query_coeffs, mode="fan_out", nonlinearity="relu")
+        nn.init.kaiming_normal_(self.key_coeffs, mode="fan_out", nonlinearity="relu")
 
         # The value matrix is given by a second order Taylor expansion in the relative position u.
         # The Taylor coefficients (matrices) must satisfy the equivariance condition in Eqn. (78) of the paper.
@@ -145,7 +149,7 @@ class GESelfAttentionBlock(nn.Module):
         # Compute attention
         score = torch.relu(Q.unsqueeze(1) + K).mean(dim=-1).masked_fill(~mask, 0)
 
-        score_denominator = score.sum(dim=-1).clamp(min=1e-8)
+        score_denominator = score.sum(dim=-1) + 1e-6
         attention = score / score_denominator.unsqueeze(-1)
 
         # Compute Values using Equivariant Kernel W_V(u)
