@@ -60,12 +60,11 @@ def train(model, dataloader, optimizer, criterion, device, epochs=1):
                 mesh["parallel_transport"].to(device).squeeze(0)
             )
             rel_pos_u = mesh["rel_pos"].to(device).squeeze(0)
-            labels = mesh["label"].to(device).squeeze(0)
+            labels = mesh["label"].to(device).long().squeeze(0)
 
             optimizer.zero_grad()
             outputs = model(x, neighbors, mask, parallel_transport_matrices, rel_pos_u)
-            probs = torch.softmax(outputs, dim=0)
-            loss = criterion(probs, labels)
+            loss = criterion(outputs.unsqueeze(0), labels.unsqueeze(0))
             loss.backward()
             optimizer.step()
 
@@ -78,15 +77,15 @@ def train(model, dataloader, optimizer, criterion, device, epochs=1):
             f"Epoch {epoch + 1}/{epochs} finished in {epoch_time:.2f}s - avg loss: {epoch_loss:.4f}"
         )
 
-        checkpoint = {
-            "epoch": epoch,
-            "model_state_dict": model.state_dict(),
-            "optimizer_state_dict": optimizer.state_dict(),
-            "loss": loss.item(),
-        }
-        save_path = f"checkpoint_final_epoch{epoch}.pth"
-        torch.save(checkpoint, f"checkpoint_epoch_{epoch}.pth")
-        print(f"Saved checkpoint to {save_path}")
+        # checkpoint = {
+        #     "epoch": epoch,
+        #     "model_state_dict": model.state_dict(),
+        #     "optimizer_state_dict": optimizer.state_dict(),
+        #     "loss": loss.item(),
+        # }
+        # save_path = f"checkpoint_epoch{epoch}.pth"
+        # torch.save(checkpoint, save_path)
+        # print(f"Saved checkpoint to {save_path}")
 
     return loss_hist
 
@@ -116,7 +115,7 @@ if __name__ == "__main__":
         mesh_directory="../data/SHREC11/processed/",
         labels_file="../data/SHREC11/classes.txt",
         N=9,
-        train_percent=0.8,
+        train_percent=0.1,
     )
 
     print(len(train_loader), len(test_loader))
@@ -127,11 +126,13 @@ if __name__ == "__main__":
 
     optimizer = optim.Adam(model.parameters(), lr=0.005)
 
-    train(
+    loss_hist = train(
         model=model,
         dataloader=train_loader,
         optimizer=optimizer,
         criterion=criterion,
         device=device,
-        epochs=1,
+        epochs=2,
     )
+
+    print(loss_hist)
