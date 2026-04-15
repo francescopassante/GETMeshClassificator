@@ -60,7 +60,7 @@ def train(
             neighbors = mesh["neighbors"].to(device).squeeze(0)
             mask = mesh["mask"].to(device).squeeze(0)
             parallel_transport_matrices = (
-                mesh["parallel_transport"].to(device).squeeze(0)
+                mesh["parallel_transport_matrices"].to(device).squeeze(0)
             )
             rel_pos_u = mesh["rel_pos"].to(device).squeeze(0)
             labels = mesh["label"].to(device).long().squeeze(0)
@@ -133,7 +133,7 @@ if __name__ == "__main__":
 
     criterion = nn.CrossEntropyLoss()
 
-    optimizer = optim.Adam(model.parameters(), lr=0.005)
+    optimizer = optim.Adam(model.parameters(), lr=0.01)
 
     loss_hist = train(
         model=model,
