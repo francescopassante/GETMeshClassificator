@@ -175,7 +175,13 @@ class GESelfAttentionBlock(nn.Module):
             self.value_matrix_first_order_params,
             self.value_basis_first_order,
         )
-        values += torch.einsum("coij, vno, vncj -> vnci", W1, rel_pos_u, f_prime_q)
+
+        W1_local = torch.einsum("coij, vno -> vncij", W1, rel_pos_u)  # [V, N, C, I, J]
+        values += torch.einsum("vncij, vncj -> vnci", W1_local, f_prime_q)
+
+        del W0
+        del W1  # Forza la liberazione della memoria, visto che non servono
+        del W1_local
 
         W2 = torch.einsum(
             "cb, boij -> coij",
@@ -185,7 +191,10 @@ class GESelfAttentionBlock(nn.Module):
 
         u_quad = torch.stack([u_0_squared, u_0_u_1, u_1_squared], dim=-1)
 
-        values += torch.einsum("coij, vno, vncj -> vnci", W2, u_quad, f_prime_q)
+        W2_local = torch.einsum("coij, vno -> vncij", W2, u_quad)  # [V, N, C, I, J]
+        values += torch.einsum("vncij, vncj -> vnci", W2_local, f_prime_q)
+        del W2
+        del W2_local  # Forza la liberazione
 
         # Aggregation
         out = torch.einsum("vn,vnci->vci", attention, values)  # [N_v, in_channels, N]
