@@ -56,6 +56,10 @@ def train(
 
             # Forward
             outputs = model(x, neighbors, mask, parallel_transport_matrices, rel_pos_u)
+            # Print the index of dimension with max output
+            # print("mesh file: ", mesh["filenumber"])
+            # print("predicted label: ", torch.argmax(outputs).item())
+            # print("True label: ", labels.item())
             raw_loss = criterion(outputs.unsqueeze(0), labels.unsqueeze(0))
 
             if torch.isnan(raw_loss):
@@ -76,18 +80,19 @@ def train(
 
         # Average epoch loss (uses unscaled batch losses)
         epoch_loss = total_loss / len(dataloader)
+        print("epoch_loss: ", epoch_loss)
         loss_hist.append(epoch_loss)
-
-        # Save checkpoint with meaningful loss value (epoch average)
-        checkpoint = {
-            "epoch": epoch,
-            "model_state_dict": model.state_dict(),
-            "optimizer_state_dict": optimizer.state_dict(),
-            "loss": epoch_loss,
-        }
-        save_path = "checkpoint.pth"
-        torch.save(checkpoint, save_path)
-        print(f"Saved checkpoint to {save_path} (epoch_loss={epoch_loss:.6f})")
+        if epoch % 10 == 0 or epoch == epochs - 1:
+            # Save checkpoint with meaningful loss value (epoch average)
+            checkpoint = {
+                "epoch": epoch,
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "loss": epoch_loss,
+            }
+            save_path = "checkpoint.pth"
+            torch.save(checkpoint, save_path)
+            # print(f"Saved checkpoint to {save_path} (epoch_loss={epoch_loss:.6f})")
 
     return loss_hist
 
@@ -117,17 +122,20 @@ if __name__ == "__main__":
         mesh_directory="../data/SHREC11/processed/",
         labels_file="../data/SHREC11/classes.txt",
         N=9,
-        train_percent=0.02,
+        train_percent=0.002,
     )
 
     print(len(train_loader), len(test_loader))
 
     model = GETClassifier(N=9, channels=12, heads=2, out_classes=30).to(device)
-    model = torch.compile(model)
+    # model = torch.compile(model)
 
     criterion = nn.CrossEntropyLoss()
 
-    optimizer = optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
+    optimizer = optim.Adam(model.parameters(), lr=3e-2, weight_decay=1e-4)
+
+    # scheduler to divide by 10 the lr at the 41st epoch
+    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.1)
 
     # Model parameters:
     num_params = sum(p.numel() for p in model.parameters())
@@ -139,7 +147,37 @@ if __name__ == "__main__":
         optimizer=optimizer,
         criterion=criterion,
         device=device,
-        epochs=2,
+        epochs=40,
+        accumulation_steps=1,
     )
 
     print(loss_hist)
+
+    # # load model from checkpoint.pth:
+    # checkpoint = torch.load("checkpoint.pth")
+    # model = GETClassifier(N=5, channels=3, heads=1, out_classes=30).to(device)
+    # model.load_state_dict(checkpoint["model_state_dict"])
+    # model.eval()
+
+    # # test the model on the test set
+    # correct = 0
+    # total = 0
+    # with torch.no_grad():
+    #     for mesh in tqdm(test_loader, desc="Testing"):
+    #         x = mesh["x"].to(device).squeeze(0)
+    #         neighbors = mesh["neighbors"].to(device).squeeze(0)
+    #         mask = mesh["mask"].to(device).squeeze(0)
+    #         parallel_transport_matrices = (
+    #             mesh["parallel_transport_matrices"].to(device).squeeze(0)
+    #         )
+    #         rel_pos_u = mesh["rel_pos"].to(device).squeeze(0)
+    #         labels = mesh["label"].to(device).long().squeeze(0)
+
+    #         outputs = model(x, neighbors, mask, parallel_transport_matrices, rel_pos_u)
+    #         predicted_label = torch.argmax(outputs).item()
+    #         true_label = labels.item()
+
+    #         if predicted_label == true_label:
+    #             correct += 1
+    #         total += 1
+    # print(f"Test Accuracy: {correct / total * 100:.2f}%")

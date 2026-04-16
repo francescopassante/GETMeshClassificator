@@ -128,8 +128,8 @@ class MeshPreprocessor:
 
 if __name__ == "__main__":
     SUBSAMPLE = 0.2  # Amount of subsampling (lower = less points)
-    RADIUS = 0.1  # Radius to build neighborhoods
-    MAX_NEIGH = 50  # Max neighbors for each vertex
+    RADIUS = 0.2  # Radius to build neighborhoods
+    MAX_NEIGH = 200  # Max neighbors for each vertex
 
     base = "../data/meshes/"
     paths = [

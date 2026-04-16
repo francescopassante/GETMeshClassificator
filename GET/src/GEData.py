@@ -49,4 +49,5 @@ class MeshDataset(Dataset):
             "parallel_transport_matrices": parallel_transport_matrices,
             "rel_pos": data["u_q"],
             "label": self.labels[file_index],
+            "filenumber": file_index,
         }

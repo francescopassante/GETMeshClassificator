@@ -30,7 +30,8 @@ class GELocalToRegularLinearBlock(nn.Module):
 
         # Learnable coefficients for each basis matrix for each output field
         # Initializing with small random values
-        self.weights = nn.Parameter(torch.randn(out_channels, self.num_basis) * 0.02)
+        self.weights = nn.Parameter(torch.empty(out_channels, self.num_basis))
+        nn.init.kaiming_normal_(self.weights, nonlinearity="relu")
 
     def forward(self, x):
         """
@@ -71,8 +72,9 @@ class GERegularToRegularLinearBlock(nn.Module):
 
         # Learnable coefficients: [out_channels, in_channels, num_basis]
         self.weights = nn.Parameter(
-            torch.randn(out_channels, in_channels, self.num_basis) * 0.02
+            torch.empty(out_channels, in_channels, self.num_basis)
         )
+        nn.init.kaiming_normal_(self.weights, nonlinearity="relu")
 
     def forward(self, x):
         # x is [N_v, in_channels, N]
@@ -109,11 +111,11 @@ class GESelfAttentionBlock(nn.Module):
 
         # Query and Key coefficients are [num_heads, in_channels, len_basis]
         self.query_coeffs = nn.Parameter(
-            torch.randn(num_heads, in_channels, len(basis)) * 0.02
+            torch.empty(num_heads, in_channels, len(basis))
         )
-        self.key_coeffs = nn.Parameter(
-            torch.randn(num_heads, in_channels, len(basis)) * 0.02
-        )
+        self.key_coeffs = nn.Parameter(torch.empty(num_heads, in_channels, len(basis)))
+        nn.init.kaiming_normal_(self.query_coeffs, nonlinearity="relu")
+        nn.init.kaiming_normal_(self.key_coeffs, nonlinearity="relu")
 
         # The value matrix is given by a second order Taylor expansion in the relative position u.
         value_basis = GEUtils.RegularToRegular(N).get_taylor_basis()
@@ -123,16 +125,23 @@ class GESelfAttentionBlock(nn.Module):
 
         # Add head dimension to value parameters: [H, in_channels, basis_dim]
         self.value_matrix_zero_order_params = nn.Parameter(
-            torch.randn(num_heads, in_channels, self.value_basis_zero_order.shape[0])
-            * 0.02
+            torch.empty(num_heads, in_channels, self.value_basis_zero_order.shape[0])
         )
         self.value_matrix_first_order_params = nn.Parameter(
-            torch.randn(num_heads, in_channels, self.value_basis_first_order.shape[0])
-            * 0.02
+            torch.empty(num_heads, in_channels, self.value_basis_first_order.shape[0])
         )
         self.value_matrix_second_order_params = nn.Parameter(
-            torch.randn(num_heads, in_channels, self.value_basis_second_order.shape[0])
-            * 0.02
+            torch.empty(num_heads, in_channels, self.value_basis_second_order.shape[0])
+        )
+
+        nn.init.kaiming_normal_(
+            self.value_matrix_zero_order_params, nonlinearity="relu"
+        )
+        nn.init.kaiming_normal_(
+            self.value_matrix_first_order_params, nonlinearity="relu"
+        )
+        nn.init.kaiming_normal_(
+            self.value_matrix_second_order_params, nonlinearity="relu"
         )
 
         self.W_M = GERegularToRegularLinearBlock(
@@ -181,7 +190,7 @@ class GESelfAttentionBlock(nn.Module):
         score = torch.relu(Q.unsqueeze(1) + K).mean(dim=-1)  # [N_v, MAX_NEIGH, H]
         score = score.masked_fill(~mask.unsqueeze(-1), 0.0)
 
-        score_denominator = score.sum(dim=1) + 1e-6  # [N_v, H]
+        score_denominator = score.sum(dim=1).clamp(min=1e-6)  # [N_v, H]
         attention = score / score_denominator.unsqueeze(1)  # [N_v, MAX_NEIGH, H]
 
         # --- Value path refactor ---
@@ -237,24 +246,56 @@ class GEResNetBlock(nn.Module):
 
     def __init__(self, N, channels, heads):
         super().__init__()
+        self.norm1 = GELayerNorm(channels)
         self.mhsa1 = GESelfAttentionBlock(N, channels, heads)
+
+        self.norm2 = GELayerNorm(channels)
         self.mhsa2 = GESelfAttentionBlock(N, channels, heads)
 
     def forward(self, x, neighbors, mask, pt_matrices, rel_pos_u):
-        identity = x  # Save the original input for the residual connection
+        identity = x  # Save the original input for the overarching residual connection
 
-        # First sub-layer: Attention -> Linear -> ReLU
+        # First sub-layer: Attention -> Norm -> ReLU
         out = self.mhsa1(x, neighbors, mask, pt_matrices, rel_pos_u)
+        out = self.norm1(out)
         out = torch.relu(out)
 
-        # Second sub-layer: Attention -> Linear
+        # Second sub-layer: Attention -> Norm
         out = self.mhsa2(out, neighbors, mask, pt_matrices, rel_pos_u)
+        out = self.norm2(out)
 
-        # The Residual Connection
+        # The single Residual Connection spanning both layers
         out = out + identity
 
-        # Final activation
-        return torch.relu(out)
+        # No final ReLU! The residual stream remains completely linear.
+        return out
+
+
+class GELayerNorm(nn.Module):
+    """
+    Gauge Equivariant Layer Normalization.
+    Computes mean and variance over the channels and the N dimensions.
+    """
+
+    def __init__(self, channels, eps=1e-5):
+        super().__init__()
+        self.eps = eps
+        # Affine parameters must be shared across the N dimension
+        # to guarantee gauge equivariance.
+        self.weight = nn.Parameter(torch.ones(1, channels, 1))
+        self.bias = nn.Parameter(torch.zeros(1, channels, 1))
+
+    def forward(self, x):
+        # x shape: [N_v, channels, N]
+        # Compute mean and variance over channels and N
+        mean = x.mean(dim=(1, 2), keepdim=True)
+        var = x.var(dim=(1, 2), keepdim=True, unbiased=False)
+
+        # Normalize
+        x_norm = (x - mean) / torch.sqrt(var + self.eps)
+
+        # Apply affine transformation
+        return x_norm * self.weight + self.bias
 
 
 class GEGroupPooling(nn.Module):
