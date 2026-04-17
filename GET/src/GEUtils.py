@@ -124,7 +124,7 @@ class RegularToRegular:
             D_theta[..., j, i] = sin_kt
             D_theta[..., j, j] = cos_kt
 
-        A = self.A.to(device)
+        A = self.A
 
         # Implement basis change to obtain the actual rotation matrix
         rho = torch.matmul(

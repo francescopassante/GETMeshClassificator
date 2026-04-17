@@ -38,15 +38,12 @@ class MeshDataset(Dataset):
     def __getitem__(self, idx):
         file_index = self.filenumbers[idx]
         data = torch.load(f"{self.base_path}T{file_index}.pt")
-        parallel_transport_matrices = self.r2r.extended_regular_representation(
-            data["g_qp"]
-        )
 
         return {
             "x": data["features"],
             "neighbors": data["neighbors"],
             "mask": data["mask"],
-            "parallel_transport_matrices": parallel_transport_matrices,
+            "parallel_transport_angles": data["g_qp"],
             "rel_pos": data["u_q"],
             "label": self.labels[file_index],
             "filenumber": file_index,

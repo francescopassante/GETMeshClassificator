@@ -45,6 +45,8 @@ def train(
 ):
     model.train()
     loss_hist = []
+    r2r = GEUtils.RegularToRegular(model.local_to_regular.N)
+    r2r.A = r2r.A.to(device)
 
     for epoch in range(epochs):
         total_loss = 0.0
@@ -56,11 +58,15 @@ def train(
             x = mesh["x"].to(device).squeeze(0)
             neighbors = mesh["neighbors"].to(device).squeeze(0)
             mask = mesh["mask"].to(device).squeeze(0)
-            parallel_transport_matrices = (
-                mesh["parallel_transport_matrices"].to(device).squeeze(0)
+            parallel_transport_angles = (
+                mesh["parallel_transport_angles"].to(device).squeeze(0)
             )
             rel_pos_u = mesh["rel_pos"].to(device).squeeze(0)
             labels = mesh["label"].to(device).long().squeeze(0)
+
+            parallel_transport_matrices = r2r.extended_regular_representation(
+                parallel_transport_angles
+            )
 
             # Forward
             outputs = model(x, neighbors, mask, parallel_transport_matrices, rel_pos_u)
@@ -124,11 +130,15 @@ def load_data(mesh_directory, labels_file, N, train_percent):
     return train_loader, test_loader
 
 
-def check_gauge_invariance(data, N, channels, heads, verbose=False):
+def check_gauge_invariance(data, N, channels, heads):
 
     x = data["x"].squeeze(0)
     neighbors = data["neighbors"].squeeze(0)
-    parallel_transport_matrices = data["parallel_transport_matrices"].squeeze(0)
+    parallel_transport_angles = data["parallel_transport_angles"].squeeze(0)
+
+    parallel_transport_matrices = GEUtils.RegularToRegular(
+        N
+    ).extended_regular_representation(parallel_transport_angles)
 
     rel_pos_u = data["rel_pos"].squeeze(0)
     mask = data["mask"].squeeze(0)
@@ -211,33 +221,31 @@ if __name__ == "__main__":
         accumulation_steps=1,
     )
 
+    print(len(train_loader), len(test_loader))
+
+    model = GETClassifier(N=9, channels=12, heads=2, out_classes=30).to(device)
+    # model = torch.compile(model)
+
+    criterion = nn.CrossEntropyLoss()
+
+    optimizer = optim.Adam(model.parameters(), lr=3e-2, weight_decay=1e-4)
+
+    # scheduler to divide by 10 the lr at the 41st epoch
+    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.1)
+
+    # Model parameters:
+    num_params = sum(p.numel() for p in model.parameters())
+    print(f"Model has {num_params} parameters")
+
+    loss_hist = train(
+        model=model,
+        dataloader=train_loader,
+        optimizer=optimizer,
+        scheduler=scheduler,
+        criterion=criterion,
+        device=device,
+        epochs=40,
+        accumulation_steps=1,
+    )
+
     print(loss_hist)
-
-    # # load model from checkpoint.pth:
-    # checkpoint = torch.load("checkpoint.pth")
-    # model = GETClassifier(N=5, channels=3, heads=1, out_classes=30).to(device)
-    # model.load_state_dict(checkpoint["model_state_dict"])
-    # model.eval()
-
-    # # test the model on the test set
-    # correct = 0
-    # total = 0
-    # with torch.no_grad():
-    #     for mesh in tqdm(test_loader, desc="Testing"):
-    #         x = mesh["x"].to(device).squeeze(0)
-    #         neighbors = mesh["neighbors"].to(device).squeeze(0)
-    #         mask = mesh["mask"].to(device).squeeze(0)
-    #         parallel_transport_matrices = (
-    #             mesh["parallel_transport_matrices"].to(device).squeeze(0)
-    #         )
-    #         rel_pos_u = mesh["rel_pos"].to(device).squeeze(0)
-    #         labels = mesh["label"].to(device).long().squeeze(0)
-
-    #         outputs = model(x, neighbors, mask, parallel_transport_matrices, rel_pos_u)
-    #         predicted_label = torch.argmax(outputs).item()
-    #         true_label = labels.item()
-
-    #         if predicted_label == true_label:
-    #             correct += 1
-    #         total += 1
-    # print(f"Test Accuracy: {correct / total * 100:.2f}%")
