@@ -1,5 +1,6 @@
 import GEBlocks
 import GEData
+import GEUtils
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -33,7 +34,14 @@ class GETClassifier(nn.Module):
 
 
 def train(
-    model, dataloader, optimizer, criterion, device, epochs=1, accumulation_steps=16
+    model,
+    dataloader,
+    optimizer,
+    scheduler,
+    criterion,
+    device,
+    epochs=1,
+    accumulation_steps=16,
 ):
     model.train()
     loss_hist = []
@@ -82,6 +90,7 @@ def train(
         epoch_loss = total_loss / len(dataloader)
         print("epoch_loss: ", epoch_loss)
         loss_hist.append(epoch_loss)
+        scheduler.step()
         if epoch % 10 == 0 or epoch == epochs - 1:
             # Save checkpoint with meaningful loss value (epoch average)
             checkpoint = {
@@ -115,6 +124,56 @@ def load_data(mesh_directory, labels_file, N, train_percent):
     return train_loader, test_loader
 
 
+def check_gauge_invariance(data, N, channels, heads, verbose=False):
+
+    x = data["x"].squeeze(0)
+    neighbors = data["neighbors"].squeeze(0)
+    parallel_transport_matrices = data["parallel_transport_matrices"].squeeze(0)
+
+    rel_pos_u = data["rel_pos"].squeeze(0)
+    mask = data["mask"].squeeze(0)
+
+    # generate a tensor of N_v random angles of the form 2pik/N k integer:
+    angles = torch.randint(0, N, (x.shape[0],)) * (2 * torch.pi / N)
+
+    cos = torch.cos(angles)
+    sin = torch.sin(angles)
+
+    # fmt: off
+    rot_mat_3d = torch.stack([
+        torch.stack([cos, -sin, torch.zeros_like(cos)], dim=-1),
+        torch.stack([sin,  cos, torch.zeros_like(cos)], dim=-1),
+        torch.stack([torch.zeros_like(cos), torch.zeros_like(cos), torch.ones_like(cos)], dim=-1)
+    ], dim=-2)
+    # fmt: on
+
+    x_rot = torch.einsum("vij,vj->vi", rot_mat_3d, x)
+    rot_rel_pos_u = torch.einsum("vij,vnj->vni", rot_mat_3d[:, :2, :2], rel_pos_u)
+    # The parallel transport angles transform as: new_theta_nv = theta_nv + random_angle_v - random_angle_n
+    r2r = GEUtils.RegularToRegular(N)
+    rot_parallel_transport_matrices = (
+        parallel_transport_matrices
+        @ r2r.extended_regular_representation(angles.unsqueeze(-1))
+        @ r2r.extended_regular_representation(-angles[neighbors])
+    )
+
+    model = GETClassifier(N=N, channels=channels, heads=heads, out_classes=30)
+    print(
+        x.shape,
+        neighbors.shape,
+        mask.shape,
+        rot_parallel_transport_matrices.shape,
+        rel_pos_u.shape,
+    )
+
+    normal_output = model(x, neighbors, mask, parallel_transport_matrices, rel_pos_u)
+    rot_output = model(
+        x_rot, neighbors, mask, rot_parallel_transport_matrices, rot_rel_pos_u
+    )
+
+    return normal_output, rot_output
+
+
 if __name__ == "__main__":
     device = "mps"
 
@@ -145,6 +204,7 @@ if __name__ == "__main__":
         model=model,
         dataloader=train_loader,
         optimizer=optimizer,
+        scheduler=scheduler,
         criterion=criterion,
         device=device,
         epochs=40,
