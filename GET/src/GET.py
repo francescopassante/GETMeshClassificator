@@ -221,31 +221,4 @@ if __name__ == "__main__":
         accumulation_steps=1,
     )
 
-    print(len(train_loader), len(test_loader))
-
-    model = GETClassifier(N=9, channels=12, heads=2, out_classes=30).to(device)
-    # model = torch.compile(model)
-
-    criterion = nn.CrossEntropyLoss()
-
-    optimizer = optim.Adam(model.parameters(), lr=3e-2, weight_decay=1e-4)
-
-    # scheduler to divide by 10 the lr at the 41st epoch
-    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.1)
-
-    # Model parameters:
-    num_params = sum(p.numel() for p in model.parameters())
-    print(f"Model has {num_params} parameters")
-
-    loss_hist = train(
-        model=model,
-        dataloader=train_loader,
-        optimizer=optimizer,
-        scheduler=scheduler,
-        criterion=criterion,
-        device=device,
-        epochs=40,
-        accumulation_steps=1,
-    )
-
     print(loss_hist)
