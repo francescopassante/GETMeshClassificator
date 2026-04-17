@@ -2,7 +2,6 @@
 *.txt
 __pycache__/
 data/
-*.png
 *ignore*
 papers/
 *.pt
