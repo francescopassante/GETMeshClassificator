@@ -195,7 +195,9 @@ def train(
     return train_loss_hist, val_loss_hist
 
 
-def load_data(mesh_directory, labels_file, N, train_percent, val_percent=0.15, device="cpu"):
+def load_data(
+    mesh_directory, labels_file, N, train_percent, val_percent=0.15, device="cpu"
+):
     """
     Create train/val/test DataLoaders from a single random split of the dataset.
 
@@ -217,8 +219,8 @@ def load_data(mesh_directory, labels_file, N, train_percent, val_percent=0.15, d
     n = len(full_dataset)
 
     train_size = int(train_percent * n)
-    val_size   = int(val_percent * n)
-    test_size  = n - train_size - val_size
+    val_size = int(val_percent * n)
+    test_size = n - train_size - val_size
 
     train_subset, val_subset, test_subset = random_split(
         full_dataset, [train_size, val_size, test_size]
@@ -229,17 +231,20 @@ def load_data(mesh_directory, labels_file, N, train_percent, val_percent=0.15, d
 
     def _loader(subset, shuffle):
         return DataLoader(
-            subset, batch_size=1, shuffle=shuffle,
-            num_workers=2, pin_memory=(device == "cuda"),
+            subset,
+            batch_size=1,
+            shuffle=shuffle,
+            num_workers=2,
+            pin_memory=(device == "cuda"),
         )
 
     return {
-        "train_loader":      _loader(train_subset, shuffle=True),
-        "val_loader":        _loader(val_subset,   shuffle=False),
-        "test_loader":       _loader(test_subset,  shuffle=False),
+        "train_loader": _loader(train_subset, shuffle=True),
+        "val_loader": _loader(val_subset, shuffle=False),
+        "test_loader": _loader(test_subset, shuffle=False),
         "train_filenumbers": _filenums(train_subset),
-        "val_filenumbers":   _filenums(val_subset),
-        "test_filenumbers":  _filenums(test_subset),
+        "val_filenumbers": _filenums(val_subset),
+        "test_filenumbers": _filenums(test_subset),
     }
 
 
@@ -265,21 +270,26 @@ def load_data_from_session(checkpoint_path, mesh_directory, labels_file, device=
             mesh_directory, labels_file, N, filenumbers=filenumbers
         )
         return DataLoader(
-            dataset, batch_size=1, shuffle=shuffle,
-            num_workers=2, pin_memory=(device == "cuda"),
+            dataset,
+            batch_size=1,
+            shuffle=shuffle,
+            num_workers=2,
+            pin_memory=(device == "cuda"),
         )
 
     train_loader = _make_loader(checkpoint["train_filenumbers"], shuffle=True)
-    test_loader  = _make_loader(checkpoint["test_filenumbers"],  shuffle=False)
+    test_loader = _make_loader(checkpoint["test_filenumbers"], shuffle=False)
 
     val_filenumbers = checkpoint.get("val_filenumbers")
-    val_loader = _make_loader(val_filenumbers, shuffle=False) if val_filenumbers else None
+    val_loader = (
+        _make_loader(val_filenumbers, shuffle=False) if val_filenumbers else None
+    )
 
     return {
         "train_loader": train_loader,
-        "val_loader":   val_loader,
-        "test_loader":  test_loader,
-        "checkpoint":   checkpoint,
+        "val_loader": val_loader,
+        "test_loader": test_loader,
+        "checkpoint": checkpoint,
     }
 
 
@@ -351,7 +361,9 @@ if __name__ == "__main__":
         f"Test: {len(data['test_loader'])}"
     )
 
-    model = GETClassifier(N=9, channels=12, heads=2, out_classes=30, num_blocks=1).to(device)
+    model = GETClassifier(N=9, channels=12, heads=2, out_classes=30, num_blocks=1).to(
+        device
+    )
     # model = torch.compile(model)
 
     criterion = nn.CrossEntropyLoss()

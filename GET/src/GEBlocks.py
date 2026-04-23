@@ -188,7 +188,9 @@ class GESelfAttentionBlock(nn.Module):
         # uniform attention over valid neighbors instead of a near-zero denominator.
         dead_mask = score_denominator < 1e-6  # [N_v, H]
         n_valid = mask.sum(dim=1, keepdim=True).clamp(min=1).float()  # [N_v, 1]
-        uniform = mask.unsqueeze(-1).float() / n_valid.unsqueeze(-1)  # [N_v, MAX_NEIGH, 1]
+        uniform = mask.unsqueeze(-1).float() / n_valid.unsqueeze(
+            -1
+        )  # [N_v, MAX_NEIGH, 1]
         attention = torch.where(
             dead_mask.unsqueeze(1),
             uniform,
