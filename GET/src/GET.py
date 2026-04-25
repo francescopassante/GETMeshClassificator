@@ -370,8 +370,8 @@ if __name__ == "__main__":
     # model = torch.compile(model)
 
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=8)
+    optimizer = optim.Adam(model.parameters(), lr=1e-2, weight_decay=1e-4)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=5)
 
     num_params = sum(p.numel() for p in model.parameters())
     print(f"Model has {num_params} parameters")
@@ -384,7 +384,7 @@ if __name__ == "__main__":
         criterion=criterion,
         device=device,
         epochs=100,
-        accumulation_steps=16,
+        accumulation_steps=8,
         val_loader=data["val_loader"],
         patience=25,
         test_loader=data["test_loader"],
